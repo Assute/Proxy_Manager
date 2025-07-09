@@ -1,88 +1,106 @@
 #!/bin/bash
 
-# 代理配置文件路径
-PROXY_CONFIG="$HOME/.proxy_config"
-
-# 定义10个不同的代理服务器
+# 代理服务器列表 - 可扩展至更多
 PROXY_LIST=(
     "socks5://user1:pass2@proxy-server2.example.com:8888"
     "socks5://user2:pass2@proxy-server2.example.com:8888"
     "socks5://user3:pass3@proxy-server3.example.com:8888"
 )
 
-# 根据日期选择代理（确保每天使用同一个代理）
-select_daily_proxy() {
-    local day_of_year=$(date +%j)  # 获取当年的第几天 (1-366)
-    local proxy_index=$(( (day_of_year % ${#PROXY_LIST[@]}) ))
-    echo "${PROXY_LIST[$proxy_index]}"
+# 代理配置文件
+CONFIG_FILE="$HOME/.proxy_config"
+
+# 日志文件
+LOG_FILE="$HOME/proxy_switch.log"
+
+# 创建配置文件（如果不存在）
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "0" > "$CONFIG_FILE"  # 默认使用第一个代理
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] 初始化代理配置文件，使用代理0: ${PROXY_LIST[0]}" >> "$LOG_FILE"
+fi
+
+# 记录日志函数
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
 }
 
-# 应用代理配置到当前会话
-apply_proxy() {
-    local proxy=$(select_daily_proxy)
-    export http_proxy="$proxy"
-    export https_proxy="$proxy"
-    echo "已设置代理: $proxy"
-    
-    # 写入环境变量文件，使后续终端会话生效
-    echo "# 自动生成的代理配置 - $(date)" > "$PROXY_CONFIG"
-    echo "export http_proxy=\"$proxy\"" >> "$PROXY_CONFIG"
-    echo "export https_proxy=\"$proxy\"" >> "$PROXY_CONFIG"
-    
-    # 确保bashrc加载此配置
-    if ! grep -q "$PROXY_CONFIG" "$HOME/.bashrc"; then
-        echo "source $PROXY_CONFIG" >> "$HOME/.bashrc"
-    fi
+# 设置代理函数
+set_proxy() {
+    local index=$1
+    export http_proxy="${PROXY_LIST[$index]}"
+    export https_proxy="${PROXY_LIST[$index]}"
+    echo "$index" > "$CONFIG_FILE"
+    echo "已切换到代理[$index]: ${PROXY_LIST[$index]}"
+    log "切换到代理[$index]: ${PROXY_LIST[$index]}"
 }
 
-# 设置每日定时切换任务
-setup_cronjob() {
-    local cron_entry="0 0 * * * $(realpath "$0") apply"
+# 取消代理函数
+unset_proxy() {
+    unset http_proxy https_proxy
+    echo "代理已取消"
+    log "代理已取消"
+}
+
+# 显示当前代理
+show_current() {
+    local index=$(cat "$CONFIG_FILE")
+    echo "当前代理: [$index] ${PROXY_LIST[$index]}"
+}
+
+# 显示所有代理
+show_all() {
+    echo "可用代理列表:"
+    for i in "${!PROXY_LIST[@]}"; do
+        echo "[$i] ${PROXY_LIST[$i]}"
+    done
+}
+
+# 自动切换代理（基于日期）
+auto_switch() {
+    local today=$(date +%-d)  # 获取当天日期（1-31）
+    local index=$((today % ${#PROXY_LIST[@]}))  # 使用日期模代理数量作为索引
     
-    # 检查cron任务是否已存在
-    if ! crontab -l 2>/dev/null | grep -q "$(basename "$0") apply"; then
-        (crontab -l 2>/dev/null; echo "$cron_entry") | crontab -
-        echo "已设置Crontab任务：每天00:00自动切换代理"
+    # 检查是否需要切换
+    current_index=$(cat "$CONFIG_FILE")
+    if [ "$current_index" -ne "$index" ]; then
+        set_proxy "$index"
     else
-        echo "Crontab任务已存在，无需重复设置"
+        echo "今天已经使用代理[$index]，无需切换"
+        log "检查代理: 今天已经使用代理[$index]，无需切换"
     fi
 }
 
-# 测试代理连接
-test_proxy() {
-    echo "正在测试代理连接..."
-    curl -s https://ipinfo.io | grep -E 'ip|country' || echo "代理测试失败"
-}
-
-# 显示当前使用的代理
-show_current_proxy() {
-    if [ -f "$PROXY_CONFIG" ]; then
-        cat "$PROXY_CONFIG"
-    else
-        echo "未找到代理配置文件"
-    fi
-}
-
-# 主函数
-main() {
-    case "$1" in
-        apply)
-            apply_proxy
-            test_proxy
-            ;;
-        cron)
-            setup_cronjob
-            ;;
-        show)
-            show_current_proxy
-            ;;
-        *)
-            echo "用法: $0 [apply|cron|show]"
-            echo "  apply - 应用今日代理并测试"
-            echo "  cron  - 设置每日自动切换任务"
-            echo "  show  - 显示当前使用的代理"
-            ;;
-    esac
-}
-
-main "$@"
+# 根据参数执行不同操作
+case "$1" in
+    auto)
+        auto_switch
+        ;;
+    manual)
+        show_all
+        read -p "请输入要使用的代理编号 [0-${#PROXY_LIST[@]}-1]: " choice
+        if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -lt "${#PROXY_LIST[@]}" ]; then
+            set_proxy "$choice"
+        else
+            echo "无效的选择"
+        fi
+        ;;
+    current)
+        show_current
+        ;;
+    list)
+        show_all
+        ;;
+    unset)
+        unset_proxy
+        ;;
+    *)
+        echo "代理管理脚本 - 支持自动和手动切换多个代理服务器"
+        echo "用法: $0 [命令]"
+        echo "可用命令:"
+        echo "  auto    - 基于日期自动切换代理"
+        echo "  manual  - 手动选择代理"
+        echo "  current - 显示当前使用的代理"
+        echo "  list    - 列出所有可用代理"
+        echo "  unset   - 取消代理设置"
+        ;;
+esac

@@ -23,7 +23,7 @@ Proxy Manager 是一个功能强大的 BASH 脚本，用于管理和自动切换
 ### 安装
 # 下载脚本并赋予执行权限
 ```shell script
-wget -N https://github.com/Assute/proxy_manager/raw/main/proxy_manager.sh && chmod +x proxy_manager.sh
+wget -N https://github.com/Assute/Proxy_Manager/blob/main/proxy_manager.sh && chmod +x proxy_manager.sh
 ```
 ### 运行
 ```shell script
